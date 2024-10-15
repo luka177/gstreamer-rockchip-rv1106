@@ -3,6 +3,7 @@
 #include <gst/gst.h>
 #include <gst/gstmemory.h>
 
+#include "gstrkmpi_common.h"
 #include "gstrkmpiallocator.h"
 #include "rk_mpi_mb.h"
 #include "rk_mpi_sys.h"
@@ -64,20 +65,29 @@ static void gst_rkmpi_allocator_mem_unmap(GstMemory *mem) {
 }
 
 static void gst_rkmpi_allocator_free(GstAllocator *allocator, GstMemory *mem) {
-  GstRkmpiAllocator *self = GST_RKMPI_ALLOCATOR(self);
+  GstRkmpiAllocator *self = GST_RKMPI_ALLOCATOR(allocator);
   struct GstRkmpiMemory *ctx = GST_RKMPI_MEMORY(mem);
 
+  RK_S32 rkret = 0;
+
   if (ctx->haveViInfo) {
-    RK_MPI_VI_ReleaseChnFrame(ctx->viPipe, ctx->viChn, &ctx->viInfo);
+    rkret = RK_MPI_VI_ReleaseChnFrame(ctx->viPipe, ctx->viChn, &ctx->viInfo);
+    RK_MPI_ERROR_CHECKV(RK_MPI_VI_ReleaseChnFrame)
+
   } else {
-    RK_MPI_MB_ReleaseMB(ctx->blk);
+    rkret = RK_MPI_MB_ReleaseMB(ctx->blk);
+    RK_MPI_ERROR_CHECKV(RK_MPI_VI_ReleaseMB)
   }
-  GST_ALLOCATOR_CLASS(parent_class)->free(allocator, mem);
+
+  g_free(mem);
+  // NOTE: free is NULL
+  // GST_ALLOCATOR_CLASS(parent_class)->free(allocator, mem);
 }
 
-static GstMemory *gst_rkmpi_allocator_make_mem_import(GstRkmpiAllocator *self, MB_BLK blk,
-                                            const VIDEO_FRAME_INFO_S *vInfo,
-                                            gsize size) {
+static GstMemory *
+gst_rkmpi_allocator_make_mem_import(GstRkmpiAllocator *self, MB_BLK blk,
+                                    const VIDEO_FRAME_INFO_S *vInfo,
+                                    gsize size) {
   // NOTE: How do we set a custom memory type? We don't. gst_memory_new_wrapped
   // doesn't either, and it does have a custom allocator.
 
@@ -141,13 +151,15 @@ static void gst_rkmpi_allocator_init(GstRkmpiAllocator *self) {
 }
 
 GstMemory *gst_rkmpi_allocator_import_mb(GstRkmpiAllocator *self, MB_BLK blk) {
-  return gst_rkmpi_allocator_make_mem_import(self, blk, NULL, RK_MPI_MB_GetSize(blk));
+  return gst_rkmpi_allocator_make_mem_import(self, blk, NULL,
+                                             RK_MPI_MB_GetSize(blk));
 }
 
 GstMemory *gst_rkmpi_allocator_import_viframe(GstRkmpiAllocator *self,
                                               const VIDEO_FRAME_INFO_S *info) {
   MB_BLK blk = info->stVFrame.pMbBlk;
-  return gst_rkmpi_allocator_make_mem_import(self, blk, info, RK_MPI_MB_GetSize(blk));
+  return gst_rkmpi_allocator_make_mem_import(self, blk, info,
+                                             RK_MPI_MB_GetSize(blk));
 }
 
 /// An allocator that only supports _import()
