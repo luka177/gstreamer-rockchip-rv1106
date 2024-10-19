@@ -378,9 +378,10 @@ static GstFlowReturn gst_rkmpi_h264enc_handle_frame(GstVideoEncoder *encoder,
 
   MB_BLK blk = NULL;
   gboolean was_imported = FALSE;
-  if ((blk = gst_rkmpi_buffer_get_mb(frame->input_buffer))) {
-    was_imported = TRUE;
-  } else {
+  if (!(blk = gst_rkmpi_buffer_get_mb(frame->input_buffer))) {
+    // FIXME: drop this codepath, it segfaults, we don't have a self->src_Blk;
+    // I think the more elegant approach would be to use a separate "rkmpiupload" element
+    // which translates this into MB_BLK. Ah well.
     // FIXME: gst_video_frame_map
     GstMapInfo inputMapInfo;
     if (!gst_buffer_map(frame->input_buffer, &inputMapInfo, GST_MAP_READ))
@@ -408,6 +409,7 @@ static GstFlowReturn gst_rkmpi_h264enc_handle_frame(GstVideoEncoder *encoder,
   h264_frame.stVFrame.u32TimeRef =
       self->input_frame_counter; // FIXME: gstreamer
   h264_frame.stVFrame.u64PTS = frame->pts;
+  h264_frame.stVFrame.enVideoFormat = VIDEO_FORMAT_TILE_16x8;
 
   g_async_queue_push(self->gstframe_queue,
                      queued_gst_frame_new(frame, self->input_frame_counter++));

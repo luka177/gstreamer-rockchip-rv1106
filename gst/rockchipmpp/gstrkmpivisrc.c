@@ -40,7 +40,7 @@ static gboolean gst_rockchip_vi_start(GstBaseSrc *src) {
   // FIMXE: settings
   const rk_aiq_working_mode_t hdr_mode = RK_AIQ_WORKING_MODE_NORMAL;
   const int buffer_count = 3;
-  const int videoFramerate = 25;
+  const int videoFramerate = 30; // FIXME: pass through framerate
   const int videoWidth = 2304, videoHeight = 1296;
 
   rk_aiq_static_info_t aiq_static_info;
@@ -83,8 +83,9 @@ static gboolean gst_rockchip_vi_start(GstBaseSrc *src) {
   vichn_attr.stIspOpt.stMaxSize.u32Height = videoHeight;
   vichn_attr.stSize.u32Width = videoWidth;
   vichn_attr.stSize.u32Height = videoHeight;
-  vichn_attr.stFrameRate.s32DstFrameRate = 25;
-  vichn_attr.stFrameRate.s32SrcFrameRate = 25;
+  vichn_attr.stFrameRate.s32DstFrameRate = videoFramerate;
+  vichn_attr.stFrameRate.s32SrcFrameRate = videoFramerate;
+  vichn_attr.enVideoFormat = VIDEO_FORMAT_TILE_16x8; // FIXME: now negotiate this
   // FIXME: AFBC 16x16, then we can do the same on VENC
   // and maybe improve latency?
   RK_MPI_VI_SetChnAttr(self->vi_pipe, self->vi_chn, &vichn_attr);
