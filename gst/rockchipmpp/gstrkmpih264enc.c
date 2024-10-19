@@ -52,11 +52,6 @@ struct _GstRKMPIH264Enc {
   _Atomic uint32_t input_frame_counter;
   /// Type: QueuedGstFrame
   GAsyncQueue *gstframe_queue;
-
-  // Source image (1)
-  MB_POOL src_Pool;
-  MB_BLK src_Blk;
-  void *src_BlkMMAP;
 };
 
 struct _GstRKMPIH264EncClass {
@@ -285,21 +280,6 @@ static gboolean gst_rkmpi_h264enc_set_format(GstVideoEncoder *encoder,
                height = GST_VIDEO_INFO_HEIGHT(&self->info);
   const RK_U32 size = GST_VIDEO_INFO_SIZE(&self->info);
 
-  self->src_Pool = 0;
-  self->src_Blk = self->src_BlkMMAP = 0;
-#if 0
-  MB_POOL_CONFIG_S pool_cfg;
-  memset(&pool_cfg, 0, sizeof(MB_POOL_CONFIG_S));
-  pool_cfg.u64MBSize = size;
-  pool_cfg.u32MBCnt = 1;
-  pool_cfg.enAllocType = MB_ALLOC_TYPE_DMA;
-  // PoolCfg.bPreAlloc = RK_FALSE;
-  self->src_Pool = RK_MPI_MB_CreatePool(&pool_cfg);
-  RK_MPI_ERROR_CHECK_NULL(self->src_Pool, RK_MPI_MB_CreatePool)
-  self->src_Blk = RK_MPI_MB_GetMB(self->src_Pool, size, RK_TRUE);
-  self->src_BlkMMAP = RK_MPI_MB_Handle2VirAddr(self->src_Blk);
-#endif
-
   VENC_CHN_ATTR_S stAttr;
   memset(&stAttr, 0, sizeof(VENC_CHN_ATTR_S));
   stAttr.stVencAttr.enType = RK_VIDEO_ID_AVC;
@@ -358,11 +338,6 @@ static gboolean gst_rkmpi_h264enc_stop(GstVideoEncoder *encoder) {
 
   RK_MPI_VENC_DestroyChn(chnId);
 
-#if 0
-  RK_MPI_MB_ReleaseMB(self->src_Blk);
-  RK_MPI_MB_DestroyPool(self->src_Pool);
-#endif
-
   gst_rkmpi_exit();
 
   gst_video_codec_state_unref(self->state);
@@ -379,18 +354,8 @@ static GstFlowReturn gst_rkmpi_h264enc_handle_frame(GstVideoEncoder *encoder,
   MB_BLK blk = NULL;
   gboolean was_imported = FALSE;
   if (!(blk = gst_rkmpi_buffer_get_mb(frame->input_buffer))) {
-    // FIXME: drop this codepath, it segfaults, we don't have a self->src_Blk;
-    // I think the more elegant approach would be to use a separate "rkmpiupload" element
-    // which translates this into MB_BLK. Ah well.
-    // FIXME: gst_video_frame_map
-    GstMapInfo inputMapInfo;
-    if (!gst_buffer_map(frame->input_buffer, &inputMapInfo, GST_MAP_READ))
-      return GST_FLOW_ERROR; // FIXME: log error
-    memcpy(self->src_BlkMMAP, inputMapInfo.data, inputMapInfo.size);
-    rkret = RK_MPI_SYS_MmzFlushCache(self->src_Blk, RK_FALSE);
-    RK_MPI_ERROR_CHECK(RK_MPI_SYS_MmzFlushCache)
-    gst_buffer_unmap(frame->input_buffer, &inputMapInfo);
-    blk = self->src_Blk;
+    GST_ELEMENT_ERROR(encoder, STREAM, FAILED, ("Expected an MPI buffer. Add rkmpiupload before this element to convert."), (NULL));
+    return GST_FLOW_ERROR;
   }
 
   RK_U32 width = GST_VIDEO_INFO_WIDTH(&self->info),
@@ -415,8 +380,6 @@ static GstFlowReturn gst_rkmpi_h264enc_handle_frame(GstVideoEncoder *encoder,
                      queued_gst_frame_new(frame, self->input_frame_counter++));
   rkret = RK_MPI_VENC_SendFrame(chnId, &h264_frame, -1);
   RK_MPI_ERROR_CHECK(RK_MPI_VENC_SendFrame)
-  // gst_buffer_unref(frame->input_buffer);
-  // frame->input_buffer = NULL;
 
   return GST_FLOW_OK;
 }
