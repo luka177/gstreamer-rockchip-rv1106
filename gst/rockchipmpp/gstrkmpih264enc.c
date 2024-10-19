@@ -378,15 +378,9 @@ static GstFlowReturn gst_rkmpi_h264enc_handle_frame(GstVideoEncoder *encoder,
 
   MB_BLK blk = NULL;
   gboolean was_imported = FALSE;
-  if (gst_buffer_n_memory(frame->input_buffer) == 1) {
-    GstMemory *dma_mem = gst_buffer_get_memory(frame->input_buffer, 0);
-    if (gst_memory_is_type(dma_mem, GST_RKMPI_ALLOCATOR_NAME)) {
-      blk = gst_rkmpi_allocator_mem_get_mb(dma_mem);
-      was_imported = TRUE;
-    }
-    gst_memory_unref(dma_mem);
-  }
-  if (!blk) {
+  if ((blk = gst_rkmpi_buffer_get_mb(frame->input_buffer))) {
+    was_imported = TRUE;
+  } else {
     // FIXME: gst_video_frame_map
     GstMapInfo inputMapInfo;
     if (!gst_buffer_map(frame->input_buffer, &inputMapInfo, GST_MAP_READ))

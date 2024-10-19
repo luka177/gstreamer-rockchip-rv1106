@@ -15,3 +15,6 @@ GstRkmpiAllocator *gst_rkmpi_allocator_new_empty();
 GstRkmpiAllocator *gst_rkmpi_allocator_new_pool(gsize size, gsize count);
 
 MB_BLK gst_rkmpi_allocator_mem_get_mb(GstMemory *mem);
+/// Extract an MB if the buffer was created with a single MB, else return null.
+/// Does not ref the buf or anything thereof (why would it?)
+MB_BLK gst_rkmpi_buffer_get_mb(GstBuffer *buf);

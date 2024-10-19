@@ -196,3 +196,16 @@ MB_BLK gst_rkmpi_allocator_mem_get_mb(GstMemory *mem) {
 
   return GST_RKMPI_MEMORY(mem)->blk;
 }
+
+MB_BLK gst_rkmpi_buffer_get_mb(GstBuffer *buf) {
+  MB_BLK ret = NULL;
+  if (gst_buffer_n_memory(buf) == 1) {
+    GstMemory *dma_mem = gst_buffer_get_memory(buf, 0);
+    if (gst_memory_is_type(dma_mem, GST_RKMPI_ALLOCATOR_NAME)) {
+      ret = gst_rkmpi_allocator_mem_get_mb(dma_mem);
+    }
+    gst_memory_unref(dma_mem);
+  }
+
+  return ret;
+}
