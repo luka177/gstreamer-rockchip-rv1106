@@ -216,7 +216,7 @@ static gboolean gst_rkmpi_enc_set_src_caps(GstVideoEncoder *encoder,
 
   GstCaps *caps = gst_caps_new_empty_simple(media_type);
   gst_caps_set_simple(caps, "stream-format", G_TYPE_STRING, "byte-stream",
-                      "alignment", G_TYPE_STRING, "nal", "width", G_TYPE_INT,
+                      "alignment", G_TYPE_STRING, "au", "width", G_TYPE_INT,
                       GST_VIDEO_INFO_WIDTH(info), "height", G_TYPE_INT,
                       GST_VIDEO_INFO_HEIGHT(info), NULL);
 
