@@ -216,7 +216,7 @@ static gboolean gst_rkmpi_enc_set_src_caps(GstVideoEncoder *encoder,
 
   GstCaps *caps = gst_caps_new_empty_simple(media_type);
   gst_caps_set_simple(caps, "stream-format", G_TYPE_STRING, "byte-stream",
-                      "alignment", G_TYPE_STRING, "nalu", "width", G_TYPE_INT,
+                      "alignment", G_TYPE_STRING, "nal", "width", G_TYPE_INT,
                       GST_VIDEO_INFO_WIDTH(info), "height", G_TYPE_INT,
                       GST_VIDEO_INFO_HEIGHT(info), NULL);
 
@@ -253,9 +253,9 @@ static void gst_rkmpi_buffer_loop(gpointer encoder) {
   rkret = RK_MPI_VENC_GetStream(0, &stFrame, -1);
   RK_MPI_ERROR_CHECKV(RK_MPI_VENC_GetStream)
 
-  gst_println(
-      "rkmpi: successfully dequeued stream packet %d (expect %d, length %d)",
-      stFrame.u32Seq, frame_seqno, stFrame.pstPack->u32Len);
+  // gst_println(
+  //     "rkmpi: successfully dequeued stream packet %d (expect %d, length %d)",
+  //     stFrame.u32Seq, frame_seqno, stFrame.pstPack->u32Len);
 
   // Output to new buffer
   if (GST_FLOW_OK != gst_video_encoder_allocate_output_frame(

@@ -133,7 +133,7 @@ static GstFlowReturn gst_rockchip_vi_create(GstPushSrc *src, GstBuffer **buf) {
 static GstStaticPadTemplate gst_rkmpivi_src_template = GST_STATIC_PAD_TEMPLATE(
     "src", GST_PAD_SRC, GST_PAD_ALWAYS,
     GST_STATIC_CAPS(
-        "video/x-raw, format=(string)NV12, width=(int)2304, height=(int)1296"));
+        "video/x-raw, format=(string)NV12, width=(int)2304, height=(int)1296, framerate=(fraction)30/1"));
 
 static void gst_rockchip_vi_class_init(GstRockchipVIClass *klass) {
   GstBaseSrcClass *base_src_class = GST_BASE_SRC_CLASS(klass);
