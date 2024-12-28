@@ -296,9 +296,9 @@ static gboolean gst_rkmpi_h264enc_set_format(GstVideoEncoder *encoder,
   stAttr.stVencAttr.u32BufSize = 0; // Doesn't actually matter for some reason
   stAttr.stVencAttr.enMirror = MIRROR_NONE;
 
-  stAttr.stRcAttr.enRcMode = VENC_RC_MODE_H264VBR;
-  stAttr.stRcAttr.stH264Cbr.u32BitRate = 3 * 1024;
-  stAttr.stRcAttr.stH264Cbr.u32Gop = 15;
+  stAttr.stRcAttr.enRcMode = VENC_RC_MODE_H264CBR;
+  stAttr.stRcAttr.stH264Cbr.u32BitRate = 1 * 1024;
+  stAttr.stRcAttr.stH264Cbr.u32Gop = 60;
   RK_MPI_VENC_CreateChn(chnId, &stAttr);
 
   VENC_RECV_PIC_PARAM_S stRecvParam;
@@ -385,6 +385,7 @@ static GstFlowReturn gst_rkmpi_h264enc_handle_frame(GstVideoEncoder *encoder,
 }
 
 gboolean gst_rkmpih264_plugin_register(GstPlugin *plugin) {
+  GST_DEBUG_CATEGORY_INIT(gstrkpmpih264, "rkmpih264", 0, "RKMPI H264 Encoder");
   return gst_element_register(plugin, "rkmpih264enc", GST_RANK_PRIMARY,
                               GST_TYPE_RKMPIH264ENC);
 }
