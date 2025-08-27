@@ -72,8 +72,6 @@ static gboolean gst_rockchip_vi_set_caps(GstBaseSrc *src, GstCaps *caps) {
     rk_aiq_static_info_t aiq_static_info;
     rk_aiq_uapi2_sysctl_enumStaticMetasByPhyId(self->camera_id,
                                                &aiq_static_info);
-    rk_aiq_uapi2_sysctl_preInit_devBufCnt(
-        aiq_static_info.sensor_info.sensor_name, "rkraw_rx", 2);
 
     self->aiq_ctx =
         rk_aiq_uapi2_sysctl_init(aiq_static_info.sensor_info.sensor_name,
