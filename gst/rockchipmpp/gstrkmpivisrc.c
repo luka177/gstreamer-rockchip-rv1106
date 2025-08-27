@@ -135,6 +135,8 @@ static GstFlowReturn gst_rockchip_vi_create(GstPushSrc *src, GstBuffer **buf) {
   VIDEO_FRAME_INFO_S frame;
   GstFlowReturn ret = GST_FLOW_ERROR;
 
+  GST_ERROR_OBJECT(self, "Hi from gst_rockchip_vi_create");
+  
   // New frame
   RK_S32 retval =
       RK_MPI_VI_GetChnFrame(self->vi_pipe, self->vi_chn, &frame, 1000);
@@ -142,7 +144,7 @@ static GstFlowReturn gst_rockchip_vi_create(GstPushSrc *src, GstBuffer **buf) {
     GST_ERROR_OBJECT(self, "Failed to get frame from VI channel");
     return ret;
   }
-
+  GST_ERROR_OBJECT(self, "gst_rockchip_vi_create: RK_MPI_VI_GetChnFrame ok");
   GstMemory *mem = gst_rkmpi_allocator_import_viframe(self->allocator,
                                                       &frame); // Cannot fail
   GstBuffer *buffer = gst_buffer_new();
