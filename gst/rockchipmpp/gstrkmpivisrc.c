@@ -53,6 +53,8 @@ static gboolean gst_rockchip_vi_set_caps(GstBaseSrc *src, GstCaps *caps) {
       vichn_attr->stIspOpt.stMaxSize.u32Height = videoHeight;
       vichn_attr->stSize.u32Width = videoWidth;
       vichn_attr->stSize.u32Height = videoHeight;
+      vichn_attr->enCompressMode = COMPRESS_MODE_NONE; 
+      vichn_attr->u32Depth = 2;
       // FIXME: this is wrong
       vichn_attr->stFrameRate.s32DstFrameRate = 25;
       vichn_attr->stFrameRate.s32SrcFrameRate = 25;
@@ -93,17 +95,29 @@ static gboolean gst_rockchip_vi_set_caps(GstBaseSrc *src, GstCaps *caps) {
 
     // Set VI attributes and enable device
     VI_DEV_ATTR_S videv_attr;
+    VI_DEV_BIND_PIPE_S stBindPipe;
+	  memset(&stBindPipe, 0, sizeof(stBindPipe));
     memset(&videv_attr, 0, sizeof(videv_attr));
     RK_MPI_VI_GetDevAttr(self->camera_id, &videv_attr);
     videv_attr.enIntfMode = VI_MODE_MIPI_YUV420_NORMAL;
     RK_MPI_VI_SetDevAttr(self->camera_id, &videv_attr);
-    RK_MPI_VI_EnableDev(self->camera_id);
-
-    VI_DEV_BIND_PIPE_S videv_pipe;
-    memset(&videv_pipe, 0, sizeof(videv_pipe));
-    videv_pipe.u32Num = 1;
-    videv_pipe.PipeId[self->vi_pipe] = self->camera_id;
-    RK_MPI_VI_SetDevBindPipe(self->camera_id, &videv_pipe);
+    int ret = RK_MPI_VI_GetDevIsEnable(devId);
+	  if (ret != RK_SUCCESS) {
+		    ret = RK_MPI_VI_EnableDev(devId);
+		    if (ret != RK_SUCCESS) {
+			    printf("RK_MPI_VI_EnableDev %x\n", ret);
+			  return -1;
+		  }
+		  stBindPipe.u32Num = 1;
+		  stBindPipe.PipeId[0] = pipeId;
+		  ret = RK_MPI_VI_SetDevBindPipe(self->camera_id, &stBindPipe);
+		  if (ret != RK_SUCCESS) {
+			  printf("RK_MPI_VI_SetDevBindPipe %x\n", ret);
+			  return FALSE;
+		  }
+	  } else {
+		  printf("RK_MPI_VI_EnableDev already\n");
+	  }
 
     // Setup VI Channel
     RK_MPI_VI_SetChnAttr(self->vi_pipe, self->vi_chn, &self->vi_config);
