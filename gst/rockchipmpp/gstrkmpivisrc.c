@@ -101,15 +101,15 @@ static gboolean gst_rockchip_vi_set_caps(GstBaseSrc *src, GstCaps *caps) {
     RK_MPI_VI_GetDevAttr(self->camera_id, &videv_attr);
     videv_attr.enIntfMode = VI_MODE_MIPI_YUV420_NORMAL;
     RK_MPI_VI_SetDevAttr(self->camera_id, &videv_attr);
-    int ret = RK_MPI_VI_GetDevIsEnable(devId);
+    int ret = RK_MPI_VI_GetDevIsEnable(self->camera_id);
 	  if (ret != RK_SUCCESS) {
-		    ret = RK_MPI_VI_EnableDev(devId);
+		    ret = RK_MPI_VI_EnableDev(self->camera_id);
 		    if (ret != RK_SUCCESS) {
 			    printf("RK_MPI_VI_EnableDev %x\n", ret);
 			  return -1;
 		  }
 		  stBindPipe.u32Num = 1;
-		  stBindPipe.PipeId[0] = pipeId;
+		  stBindPipe.PipeId[0] = self->camera_id;
 		  ret = RK_MPI_VI_SetDevBindPipe(self->camera_id, &stBindPipe);
 		  if (ret != RK_SUCCESS) {
 			  printf("RK_MPI_VI_SetDevBindPipe %x\n", ret);
