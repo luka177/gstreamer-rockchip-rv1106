@@ -69,6 +69,9 @@ enum {
   N_PROPERTIES
 };
 
+#define RK_ALIGN(x, a) (((x) + (a)-1) & ~((a)-1))
+#define RK_ALIGN_2(x) RK_ALIGN(x, 2)
+
 static GParamSpec *obj_properties[N_PROPERTIES];
 
 G_DEFINE_TYPE(GstRKMPIH264Enc, gst_rkmpi_h264enc, GST_TYPE_VIDEO_ENCODER)
@@ -409,21 +412,46 @@ static gboolean gst_rkmpi_h264enc_set_format(GstVideoEncoder *encoder,
   if (!gst_gst2rkmpi_format(&stAttr.stVencAttr.enPixelFormat,
                             GST_VIDEO_INFO_FORMAT(&self->info)))
     return FALSE;
-  stAttr.stGopAttr.enGopMode = VENC_GOPMODE_NORMALP;
-  stAttr.stVencAttr.u32Profile = H264E_PROFILE_MAIN;
+  stAttr.stVencAttr.u32Profile = H264E_PROFILE_HIGH;
   stAttr.stVencAttr.u32PicWidth = width;
   stAttr.stVencAttr.u32PicHeight = height;
-  stAttr.stVencAttr.u32VirWidth = width;
-  stAttr.stVencAttr.u32VirHeight = height;
-  stAttr.stVencAttr.u32StreamBufCnt = 2;
-  stAttr.stVencAttr.u32BufSize = 0; // Doesn't actually matter for some reason
-  stAttr.stVencAttr.enMirror = MIRROR_NONE;
+  stAttr.stVencAttr.u32VirWidth = RK_ALIGN_2(width);
+  stAttr.stVencAttr.u32VirHeight = RK_ALIGN_2(height);
+  stAttr.stVencAttr.u32StreamBufCnt = 8;
+  stAttr.stVencAttr.u32BufSize = width * height * 2;
+  stAttr.stRcAttr.stH264Cbr.u32SrcFrameRateNum = 60;
+  stAttr.stRcAttr.stH264Cbr.u32SrcFrameRateDen = 1;
+  stAttr.stRcAttr.stH264Cbr.fr32DstFrameRateNum = 60;
+  stAttr.stRcAttr.stH264Cbr.fr32DstFrameRateDen = 1;
+  stAttr.stRcAttr.stH264Cbr.u32StatTime = 1;
 
-  stAttr.stRcAttr.enRcMode = VENC_RC_MODE_H264CBR;
+ stAttr.stRcAttr.enRcMode = VENC_RC_MODE_H264CBR;
   stAttr.stRcAttr.stH264Cbr.u32BitRate = self->bitrate_kbps;
-  stAttr.stRcAttr.stH264Cbr.u32Gop = 60;
+  stAttr.stRcAttr.stH264Cbr.u32Gop = 7;
   RK_MPI_VENC_CreateChn(chnId, &stAttr);
 
+  VENC_RC_PARAM_S pstRcParam;
+  memset(&pstRcParam, 0, sizeof(VENC_RC_PARAM_S));
+  pstRcParam.s32FirstFrameStartQp = 28;
+pstRcParam.stParamH264.u32MinQp   = 8;
+pstRcParam.stParamH264.u32MaxQp   = 51;
+pstRcParam.stParamH264.u32MinIQp  = 8;
+pstRcParam.stParamH264.u32MaxIQp  = 51;
+
+// try to get stable bitrate???
+pstRcParam.stParamH264.u32FrmMinQp   = 16;
+pstRcParam.stParamH264.u32FrmMinIQp  = 14;
+pstRcParam.stParamH264.u32FrmMaxQp   = 36;
+pstRcParam.stParamH264.u32FrmMaxIQp  = 32;
+  RK_MPI_VENC_SetRcParam(chnId, &pstRcParam);
+ /* VENC_SUPERFRAME_CFG_S stSuperFrameCfg;
+  memset(&stSuperFrameCfg, 0, sizeof(stSuperFrameCfg));
+  stSuperFrameCfg.enSuperFrmMode = SUPERFRM_DISCARD;
+  stSuperFrameCfg.u32SuperIFrmBitsThr = 440 * 1024 * 8;  // 100KByte
+  stSuperFrameCfg.u32SuperPFrmBitsThr = 180 * 1024 * 8;  // 20KByte
+  stSuperFrameCfg.enRcPriority = VENC_RC_PRIORITY_BITRATE_FIRST;
+  RK_MPI_VENC_SetSuperFrameStrategy(stVencCfg.u32ChnId, &stSuperFrameCfg);
+*/
   VENC_RECV_PIC_PARAM_S stRecvParam;
   memset(&stRecvParam, 0, sizeof(VENC_RECV_PIC_PARAM_S));
   stRecvParam.s32RecvPicNum = -1;

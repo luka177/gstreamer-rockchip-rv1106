@@ -90,8 +90,8 @@ static gboolean gst_rockchip_vi_set_caps(GstBaseSrc *src, GstCaps *caps) {
       vichn_attr->enCompressMode = COMPRESS_MODE_NONE; 
       vichn_attr->u32Depth = 2;
       // FIXME: this is wrong
-      vichn_attr->stFrameRate.s32DstFrameRate = 25;
-      vichn_attr->stFrameRate.s32SrcFrameRate = 25;
+      vichn_attr->stFrameRate.s32DstFrameRate = -1;
+      vichn_attr->stFrameRate.s32SrcFrameRate = -1;
       vichn_attr->enVideoFormat =
           VIDEO_FORMAT_TILE_16x8; // FIXME: now negotiate this
 
