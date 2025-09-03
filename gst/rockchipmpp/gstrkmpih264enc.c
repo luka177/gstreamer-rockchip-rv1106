@@ -55,6 +55,8 @@ struct _GstRKMPIH264Enc {
   _Atomic uint32_t input_frame_counter;
   /// Type: QueuedGstFrame
   GAsyncQueue *gstframe_queue;
+  //Stopping
+  gint stopping;
 };
 
 struct _GstRKMPIH264EncClass {
@@ -191,6 +193,18 @@ static void gst_rkmpi_h264enc_get_property(GObject *object,
   }
 }
 
+static gboolean gst_rkmpi_h264enc_flush (GstVideoEncoder *enc) {
+   gst_printerrln("flush enter\n");
+  GstRKMPIH264Enc *self = GST_RKMPIH264ENC (enc);
+  g_atomic_int_set (&self->stopping, 1);
+
+  RK_MPI_VENC_StopRecvFrame (chnId);
+
+  g_async_queue_push (self->gstframe_queue, queued_gst_frame_new (NULL, (uint32_t)-1));
+     gst_printerrln("flush exit\n");
+  return TRUE;
+}
+
 static void gst_rkmpi_h264enc_class_init(GstRKMPIH264EncClass *klass) {
   GstVideoEncoderClass *video_encoder = GST_VIDEO_ENCODER_CLASS(klass);
   video_encoder->start = gst_rkmpi_h264enc_start;
@@ -199,6 +213,7 @@ static void gst_rkmpi_h264enc_class_init(GstRKMPIH264EncClass *klass) {
       gst_rkmpi_h264enc_finish; // FIXME: maybe implement flush?
   video_encoder->set_format = gst_rkmpi_h264enc_set_format;
   video_encoder->handle_frame = gst_rkmpi_h264enc_handle_frame;
+  video_encoder->flush = gst_rkmpi_h264enc_flush;
 
   GObjectClass *gobject_class = G_OBJECT_CLASS(klass);
   gobject_class->set_property = gst_rkmpi_h264enc_set_property;
@@ -243,6 +258,7 @@ static gboolean gst_rkmpi_h264enc_start(GstVideoEncoder *encoder) {
   gst_video_info_init(&self->info);
   // FIXME: is this type of cast legal?
   self->gstframe_queue = g_async_queue_new_full(gstvideocodecframe_unref2);
+  g_atomic_int_set(&self->stopping, 0);
   // FIXME: NULLCHECK queue alloc
 
   return TRUE;
@@ -284,46 +300,95 @@ static gboolean gst_rkmpi_enc_set_src_caps(GstVideoEncoder *encoder,
   return gst_video_encoder_negotiate(encoder);
 }
 
-static void gst_rkmpi_buffer_loop(gpointer encoder) {
-  GstRKMPIH264Enc *self = GST_RKMPIH264ENC(encoder);
+static GstPadProbeReturn
+sink_event_probe (GstPad *pad, GstPadProbeInfo *info, gpointer user_data)
+{
+  GstRKMPIH264Enc *self = GST_RKMPIH264ENC (user_data);
 
-  // Next frame we expect
-  struct QueuedGstFrame *gst_frame_w =
-      g_async_queue_pop(self->gstframe_queue); // FIXME: this can block forever
-  GstVideoCodecFrame *gst_frame = gst_frame_w->frame_or_null;
-  uint32_t frame_seqno = gst_frame_w->u32SeqNo;
-  g_free(gst_frame_w);
-  if (!gst_frame)
-    return; // Poison pill
+  if (GST_PAD_PROBE_INFO_TYPE (info) & GST_PAD_PROBE_TYPE_EVENT_UPSTREAM) {
+    GstEvent *ev = GST_PAD_PROBE_INFO_EVENT (info);
+    if (GST_EVENT_TYPE (ev) == GST_EVENT_FLUSH_START) {
+      /* make the worker exit promptly */
+      g_atomic_int_set (&self->stopping, 1);
+      RK_MPI_VENC_StopRecvFrame (chnId); /* let GetStream time out */
+      g_async_queue_push (self->gstframe_queue,
+                          queued_gst_frame_new (NULL, (uint32_t)-1));
+    }
+  }
+  return GST_PAD_PROBE_OK;
+}
 
-  // Get response bitstream
-  RK_S32 rkret;
-  VENC_PACK_S pack;
-  VENC_STREAM_S stFrame;
-  stFrame.pstPack = &pack; // This is actually an array, but we have size 1
-  stFrame.u32PackCount = 1;
-  stFrame.u32Seq = frame_seqno;
-  rkret = RK_MPI_VENC_GetStream(0, &stFrame, -1);
-  RK_MPI_ERROR_CHECKV(RK_MPI_VENC_GetStream)
+#define GETSTREAM_TIMEOUT_MS 20
+#define QUEUE_TIMEOUT_US     (20 * 1000)
 
-  // gst_println(
-  //     "rkmpi: successfully dequeued stream packet %d (expect %d, length %d)",
-  //     stFrame.u32Seq, frame_seqno, stFrame.pstPack->u32Len);
+static void gst_rkmpi_buffer_loop (gpointer encoder) {
+  GstRKMPIH264Enc *self = GST_RKMPIH264ENC (encoder);
+  GstVideoEncoder *ven = GST_VIDEO_ENCODER (encoder);
+  GstPad *srcpad  = ven->srcpad;
+  GstPad *sinkpad = ven->sinkpad;
 
-  // Output to new buffer
-  if (GST_FLOW_OK != gst_video_encoder_allocate_output_frame(
-                         encoder, gst_frame, stFrame.pstPack->u32Len))
-    return; // FIXME: unmap, error logging
-  GstMapInfo outputMapInfo;
-  if (!gst_buffer_map(gst_frame->output_buffer, &outputMapInfo, GST_MAP_WRITE))
-    return; // FIXME: error check
-  void *response_data = RK_MPI_MB_Handle2VirAddr(stFrame.pstPack->pMbBlk);
-  memcpy(outputMapInfo.data, response_data, stFrame.pstPack->u32Len);
-  rkret = RK_MPI_VENC_ReleaseStream(chnId, &stFrame);
-  RK_MPI_ERROR_CHECKV(RK_MPI_VENC_ReleaseStream)
-  gst_buffer_unmap(gst_frame->output_buffer, &outputMapInfo);
-  if (GST_FLOW_OK != gst_video_encoder_finish_frame(encoder, gst_frame))
-    return; // FIXME: error check;
+  for (;;) {
+    if (g_atomic_int_get (&self->stopping) ||
+        GST_PAD_IS_FLUSHING (srcpad) ||
+        GST_PAD_IS_FLUSHING (sinkpad) ||
+        gst_pad_get_task_state (srcpad) != GST_TASK_STARTED)
+      goto pause_and_return;
+
+    struct QueuedGstFrame *q =
+        g_async_queue_timeout_pop (self->gstframe_queue, QUEUE_TIMEOUT_US);
+    if (!q) continue;
+
+    GstVideoCodecFrame *gst_frame = q->frame_or_null;
+    uint32_t frame_seqno = q->u32SeqNo;
+    g_free (q);
+    if (!gst_frame)
+      goto pause_and_return;
+
+    VENC_PACK_S pack = {0};
+    VENC_STREAM_S st = {0};
+    st.pstPack = &pack;
+    st.u32PackCount = 1;
+    st.u32Seq = frame_seqno;
+
+    gboolean got_pack = FALSE;
+    while (!g_atomic_int_get (&self->stopping) &&
+           !GST_PAD_IS_FLUSHING (srcpad) &&
+           !GST_PAD_IS_FLUSHING (sinkpad) &&
+           gst_pad_get_task_state (srcpad) == GST_TASK_STARTED) {
+      if (RK_MPI_VENC_GetStream (chnId, &st, GETSTREAM_TIMEOUT_MS) == RK_SUCCESS) {
+        got_pack = TRUE;
+        break;
+      }
+    }
+
+    if (!got_pack || GST_PAD_IS_FLUSHING (srcpad) ||
+        GST_PAD_IS_FLUSHING (sinkpad) ||
+        gst_pad_get_task_state (srcpad) != GST_TASK_STARTED) {
+      gst_video_encoder_finish_frame (ven, gst_frame);
+      continue;
+    }
+
+    if (gst_video_encoder_allocate_output_frame (ven, gst_frame,
+                                                 st.pstPack->u32Len) != GST_FLOW_OK) {
+      RK_MPI_VENC_ReleaseStream (chnId, &st);
+      goto pause_and_return;
+    }
+
+    GstMapInfo out;
+    if (gst_buffer_map (gst_frame->output_buffer, &out, GST_MAP_WRITE)) {
+      void *data = RK_MPI_MB_Handle2VirAddr (st.pstPack->pMbBlk);
+      memcpy (out.data, data, st.pstPack->u32Len);
+      gst_buffer_unmap (gst_frame->output_buffer, &out);
+    }
+    RK_MPI_VENC_ReleaseStream (chnId, &st);
+
+    if (gst_video_encoder_finish_frame (ven, gst_frame) != GST_FLOW_OK)
+      goto pause_and_return;
+  }
+
+pause_and_return:
+  gst_pad_pause_task (srcpad);
+  return;
 }
 
 static gboolean gst_rkmpi_h264enc_set_format(GstVideoEncoder *encoder,
@@ -364,6 +429,11 @@ static gboolean gst_rkmpi_h264enc_set_format(GstVideoEncoder *encoder,
   stRecvParam.s32RecvPicNum = -1;
   RK_MPI_VENC_StartRecvFrame(chnId, &stRecvParam);
 
+    gst_pad_add_probe (GST_VIDEO_ENCODER (encoder)->sinkpad,
+                     GST_PAD_PROBE_TYPE_EVENT_UPSTREAM,
+                     sink_event_probe, self, NULL);
+
+
   gst_pad_start_task(encoder->srcpad, gst_rkmpi_buffer_loop, self, NULL);
 
   return gst_rkmpi_enc_set_src_caps(encoder, "video/x-h264");
@@ -373,6 +443,7 @@ static GstFlowReturn gst_rkmpi_h264enc_finish(GstVideoEncoder *encoder) {
 gst_printerrln("gst_rkmpi_h264enc_finish: Enter\n");
   GstRKMPIH264Enc *self = GST_RKMPIH264ENC(encoder);
 
+  g_atomic_int_set (&self->stopping, 1);
   RK_S32 rkret;
   rkret = RK_MPI_VENC_StopRecvFrame(chnId);
   // Hey, please generate the EOS bitstream
@@ -396,10 +467,25 @@ static gboolean gst_rkmpi_h264enc_stop(GstVideoEncoder *encoder) {
   gst_printerrln("gst_rkmpi_h264enc_stop: Enter\n");
   GstRKMPIH264Enc *self = GST_RKMPIH264ENC(encoder);
 
+  g_atomic_int_set(&self->stopping, 1);
+
+  RK_MPI_VENC_StopRecvFrame(chnId);
+  // wake the queue pop() if it's blocked
+  g_async_queue_push(self->gstframe_queue, queued_gst_frame_new (NULL, (uint32_t)-1));
+
+  // stop the pad task
+  GST_VIDEO_ENCODER_STREAM_UNLOCK(encoder);
+  gst_pad_stop_task(encoder->srcpad);
+  GST_VIDEO_ENCODER_STREAM_LOCK(encoder);
+
   RK_MPI_VENC_DestroyChn(chnId);
 
   gst_rkmpi_exit();
 
+  if(self->gstframe_queue) {
+    g_async_queue_unref(self->gstframe_queue);
+    self->gstframe_queue = NULL;
+  }
   gst_video_codec_state_unref(self->state);
   GST_DEBUG_OBJECT(self, "stopped");
   gst_printerrln("gst_rkmpi_h264enc_stop: Exit\n");
@@ -409,7 +495,13 @@ static gboolean gst_rkmpi_h264enc_stop(GstVideoEncoder *encoder) {
 static GstFlowReturn gst_rkmpi_h264enc_handle_frame(GstVideoEncoder *encoder,
                                                     GstVideoCodecFrame *frame) {
   GstRKMPIH264Enc *self = GST_RKMPIH264ENC(encoder);
+  GstPad *srcpad = encoder->srcpad;
+  const RK_S32 SEND_TIMEOUT_MS = 20;
   RK_S32 rkret = 0;
+
+  if (g_atomic_int_get (&self->stopping) ||
+      gst_pad_get_task_state (srcpad) != GST_TASK_STARTED)
+    return GST_FLOW_FLUSHING;
 
   MB_BLK blk = NULL;
   gboolean was_imported = FALSE;
@@ -436,10 +528,18 @@ static GstFlowReturn gst_rkmpi_h264enc_handle_frame(GstVideoEncoder *encoder,
   h264_frame.stVFrame.u64PTS = frame->pts;
   h264_frame.stVFrame.enVideoFormat = VIDEO_FORMAT_TILE_16x8;
 
+  for (;;) {
+    if (g_atomic_int_get (&self->stopping) ||
+        gst_pad_get_task_state (srcpad) != GST_TASK_STARTED)
+      return GST_FLOW_FLUSHING;
+
+    rkret = RK_MPI_VENC_SendFrame (chnId, &h264_frame, SEND_TIMEOUT_MS);
+    if (rkret == RK_SUCCESS) break;
+    /* else timeout/EAGAIN → retry while active */
+  }
+
   g_async_queue_push(self->gstframe_queue,
-                     queued_gst_frame_new(frame, self->input_frame_counter++));
-  rkret = RK_MPI_VENC_SendFrame(chnId, &h264_frame, -1);
-  RK_MPI_ERROR_CHECK(RK_MPI_VENC_SendFrame)
+                    queued_gst_frame_new(frame, self->input_frame_counter++));
 
   return GST_FLOW_OK;
 }
