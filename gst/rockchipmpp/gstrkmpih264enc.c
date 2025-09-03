@@ -48,6 +48,9 @@ struct _GstRKMPIH264Enc {
   GstVideoCodecState *state;
   GstVideoInfo info;
 
+  // config
+  guint bitrate_kbps;
+
   // What seqno is that of the next buffer?
   _Atomic uint32_t input_frame_counter;
   /// Type: QueuedGstFrame
@@ -57,6 +60,14 @@ struct _GstRKMPIH264Enc {
 struct _GstRKMPIH264EncClass {
   GstVideoEncoderClass parent_class;
 };
+
+enum {
+  PROP_0,
+  PROP_BITRATE,
+  N_PROPERTIES
+};
+
+static GParamSpec *obj_properties[N_PROPERTIES];
 
 G_DEFINE_TYPE(GstRKMPIH264Enc, gst_rkmpi_h264enc, GST_TYPE_VIDEO_ENCODER)
 #define GST_TYPE_RKMPIH264ENC (gst_rkmpi_h264enc_get_type())
@@ -138,6 +149,7 @@ static GstStaticPadTemplate gst_rkmpih264enc_sink_template =
 
 static void gst_rkmpi_h264enc_init(GstRKMPIH264Enc *element) {
   GstRKMPIH264Enc *self = GST_RKMPIH264ENC(element);
+  self->bitrate_kbps = 4000; // default 4 Mbps
 }
 
 static gboolean gst_rkmpi_h264enc_start(GstVideoEncoder *encoder);
@@ -147,6 +159,38 @@ static gboolean gst_rkmpi_h264enc_set_format(GstVideoEncoder *encoder,
 static GstFlowReturn gst_rkmpi_h264enc_finish(GstVideoEncoder *encoder);
 static GstFlowReturn gst_rkmpi_h264enc_handle_frame(GstVideoEncoder *self,
                                                     GstVideoCodecFrame *frame);
+static void gst_rkmpi_h264enc_set_property(GObject *object,
+                                           guint prop_id,
+                                           const GValue *value,
+                                           GParamSpec *pspec) {
+  GstRKMPIH264Enc *self = GST_RKMPIH264ENC(object);
+
+  switch (prop_id) {
+  case PROP_BITRATE:
+    self->bitrate_kbps = g_value_get_uint(value);
+    break;
+  default:
+    G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
+    break;
+  }
+}
+
+static void gst_rkmpi_h264enc_get_property(GObject *object,
+                                           guint prop_id,
+                                           GValue *value,
+                                           GParamSpec *pspec) {
+  GstRKMPIH264Enc *self = GST_RKMPIH264ENC(object);
+
+  switch (prop_id) {
+  case PROP_BITRATE:
+    g_value_set_uint(value, self->bitrate_kbps);
+    break;
+  default:
+    G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
+    break;
+  }
+}
+
 static void gst_rkmpi_h264enc_class_init(GstRKMPIH264EncClass *klass) {
   GstVideoEncoderClass *video_encoder = GST_VIDEO_ENCODER_CLASS(klass);
   video_encoder->start = gst_rkmpi_h264enc_start;
@@ -155,6 +199,20 @@ static void gst_rkmpi_h264enc_class_init(GstRKMPIH264EncClass *klass) {
       gst_rkmpi_h264enc_finish; // FIXME: maybe implement flush?
   video_encoder->set_format = gst_rkmpi_h264enc_set_format;
   video_encoder->handle_frame = gst_rkmpi_h264enc_handle_frame;
+
+  GObjectClass *gobject_class = G_OBJECT_CLASS(klass);
+  gobject_class->set_property = gst_rkmpi_h264enc_set_property;
+  gobject_class->get_property = gst_rkmpi_h264enc_get_property;
+
+  obj_properties[PROP_BITRATE] =
+      g_param_spec_uint("bitrate",
+                        "Bitrate (kbps)",
+                        "Target bitrate in kilobits per second for H.264 CBR",
+                        1,
+                        200000,
+                        4000,
+                        G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+  g_object_class_install_properties(gobject_class, N_PROPERTIES, obj_properties);
 
   GstElementClass *element_class = GST_ELEMENT_CLASS(klass);
   gst_element_class_add_pad_template(
@@ -297,7 +355,7 @@ static gboolean gst_rkmpi_h264enc_set_format(GstVideoEncoder *encoder,
   stAttr.stVencAttr.enMirror = MIRROR_NONE;
 
   stAttr.stRcAttr.enRcMode = VENC_RC_MODE_H264CBR;
-  stAttr.stRcAttr.stH264Cbr.u32BitRate = 1 * 1024;
+  stAttr.stRcAttr.stH264Cbr.u32BitRate = self->bitrate_kbps;
   stAttr.stRcAttr.stH264Cbr.u32Gop = 60;
   RK_MPI_VENC_CreateChn(chnId, &stAttr);
 
