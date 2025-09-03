@@ -131,13 +131,14 @@ static gboolean gst_rockchip_vi_start(GstBaseSrc *src) { return TRUE; }
 
 static gboolean gst_rockchip_vi_stop(GstBaseSrc *src) {
   GstRockchipVI *self = GST_ROCKCHIP_VI(src);
-
+GST_ERROR_OBJECT(self, "gst_rockchip_vi_stop: Enter");
   RK_MPI_VI_DisableChn(self->vi_pipe, self->vi_chn);
   RK_MPI_VI_DisableDev(self->camera_id);
-
+GST_ERROR_OBJECT(self, "gst_rockchip_vi_stop: Disabled chn/dev");
   rk_aiq_uapi2_sysctl_stop(self->aiq_ctx, false);
+  GST_ERROR_OBJECT(self, "gst_rockchip_vi_stop: stopped uapi");
   rk_aiq_uapi2_sysctl_deinit(self->aiq_ctx);
-
+GST_ERROR_OBJECT(self, "gst_rockchip_vi_stop: Exit");
   return TRUE;
 }
 

@@ -370,6 +370,7 @@ static gboolean gst_rkmpi_h264enc_set_format(GstVideoEncoder *encoder,
 }
 
 static GstFlowReturn gst_rkmpi_h264enc_finish(GstVideoEncoder *encoder) {
+gst_printerrln("gst_rkmpi_h264enc_finish: Enter\n");
   GstRKMPIH264Enc *self = GST_RKMPIH264ENC(encoder);
 
   RK_S32 rkret;
@@ -387,11 +388,12 @@ static GstFlowReturn gst_rkmpi_h264enc_finish(GstVideoEncoder *encoder) {
       return GST_FLOW_ERROR;
     GST_VIDEO_ENCODER_STREAM_LOCK(encoder);
   }
-
+gst_printerrln("gst_rkmpi_h264enc_finish: Exit\n");
   return GST_FLOW_OK;
 }
 
 static gboolean gst_rkmpi_h264enc_stop(GstVideoEncoder *encoder) {
+  gst_printerrln("gst_rkmpi_h264enc_stop: Enter\n");
   GstRKMPIH264Enc *self = GST_RKMPIH264ENC(encoder);
 
   RK_MPI_VENC_DestroyChn(chnId);
@@ -400,7 +402,7 @@ static gboolean gst_rkmpi_h264enc_stop(GstVideoEncoder *encoder) {
 
   gst_video_codec_state_unref(self->state);
   GST_DEBUG_OBJECT(self, "stopped");
-
+  gst_printerrln("gst_rkmpi_h264enc_stop: Exit\n");
   return TRUE;
 }
 
