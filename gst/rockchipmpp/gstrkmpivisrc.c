@@ -165,14 +165,25 @@ static gboolean gst_rockchip_vi_start(GstBaseSrc *src) { return TRUE; }
 
 static gboolean gst_rockchip_vi_stop(GstBaseSrc *src) {
   GstRockchipVI *self = GST_ROCKCHIP_VI(src);
-GST_ERROR_OBJECT(self, "gst_rockchip_vi_stop: Enter");
+  g_atomic_int_set(&self->stopping, 1);
+   {
+    const gint64 deadline = g_get_monotonic_time() + 1000 * G_TIME_SPAN_MILLISECOND;
+    gint left = gst_rkmpi_allocator_vi_outstanding(self->allocator);
+    while (g_get_monotonic_time() < deadline) {
+      if (left == 0)
+        break;
+      g_usleep(2000);
+    }
+    if (left != 0) {
+      GST_WARNING_OBJECT(self, "stopping with %d VI frame(s) still outstanding",
+                         left);
+    }
+  }
   RK_MPI_VI_DisableChn(self->vi_pipe, self->vi_chn);
   RK_MPI_VI_DisableDev(self->camera_id);
-GST_ERROR_OBJECT(self, "gst_rockchip_vi_stop: Disabled chn/dev");
   rk_aiq_uapi2_sysctl_stop(self->aiq_ctx, false);
-  GST_ERROR_OBJECT(self, "gst_rockchip_vi_stop: stopped uapi");
   rk_aiq_uapi2_sysctl_deinit(self->aiq_ctx);
-GST_ERROR_OBJECT(self, "gst_rockchip_vi_stop: Exit");
+  gst_rkmpi_exit();
   return TRUE;
 }
 
@@ -197,7 +208,8 @@ gst_rockchip_vi_create (GstPushSrc *src, GstBuffer **buf)
     RK_S32 rc = RK_MPI_VI_GetChnFrame (self->vi_pipe, self->vi_chn,
                                        &frame, GET_FRAME_TIMEOUT_MS);
     if (rc == RK_SUCCESS) {
-      GstMemory *mem = gst_rkmpi_allocator_import_viframe (self->allocator, &frame);
+      GstMemory *mem = gst_rkmpi_allocator_import_viframe (
+          self->allocator, self->vi_pipe, self->vi_chn, &frame);
       if (G_UNLIKELY (!mem)) {
         RK_MPI_VI_ReleaseChnFrame (self->vi_pipe, self->vi_chn, &frame);
         return GST_FLOW_ERROR;

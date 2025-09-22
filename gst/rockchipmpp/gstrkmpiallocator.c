@@ -14,6 +14,8 @@ struct _GstRkmpiAllocator {
 
   MB_POOL pool;
   MB_POOL_CONFIG_S pool_config;
+
+  gint vi_frames_outstanding;
 };
 
 typedef struct _GstRkmpiAllocatorClass GstRkmpiAllocatorClass;
@@ -73,6 +75,7 @@ static void gst_rkmpi_allocator_free(GstAllocator *allocator, GstMemory *mem) {
   if (ctx->haveViInfo) {
     rkret = RK_MPI_VI_ReleaseChnFrame(ctx->viPipe, ctx->viChn, &ctx->viInfo);
     RK_MPI_ERROR_CHECKV(RK_MPI_VI_ReleaseChnFrame)
+    g_atomic_int_add(&self->vi_frames_outstanding, -1);
 
   } else {
     rkret = RK_MPI_MB_ReleaseMB(ctx->blk);
@@ -93,7 +96,7 @@ gst_rkmpi_allocator_make_mem_import(GstRkmpiAllocator *self, MB_BLK blk,
 
   struct GstRkmpiMemory *xmem = g_malloc0(sizeof(struct GstRkmpiMemory));
   gst_memory_init(&xmem->parent, 0, GST_ALLOCATOR(self), NULL,
-                  self->pool_config.u64MBSize, 4096, 0, size);
+                  size, 4096, 0, size);
 
   xmem->blk = blk;
   xmem->haveViInfo = FALSE;
@@ -148,6 +151,7 @@ static void gst_rkmpi_allocator_init(GstRkmpiAllocator *self) {
   allocator->mem_unmap = gst_rkmpi_allocator_mem_unmap;
 
   self->pool = 0;
+  g_atomic_int_set(&self->vi_frames_outstanding, 0);
 }
 
 GstMemory *gst_rkmpi_allocator_import_mb(GstRkmpiAllocator *self, MB_BLK blk) {
@@ -156,10 +160,19 @@ GstMemory *gst_rkmpi_allocator_import_mb(GstRkmpiAllocator *self, MB_BLK blk) {
 }
 
 GstMemory *gst_rkmpi_allocator_import_viframe(GstRkmpiAllocator *self,
+                                              VI_PIPE viPipe,
+                                              VI_CHN  viChn,
                                               const VIDEO_FRAME_INFO_S *info) {
   MB_BLK blk = info->stVFrame.pMbBlk;
-  return gst_rkmpi_allocator_make_mem_import(self, blk, info,
-                                             RK_MPI_MB_GetSize(blk));
+  GstMemory *m = gst_rkmpi_allocator_make_mem_import(
+      self, blk, info, RK_MPI_MB_GetSize(blk));
+  struct GstRkmpiMemory *xm = GST_RKMPI_MEMORY(m);
+  xm->haveViInfo = TRUE;
+  xm->viPipe = viPipe;
+  xm->viChn  = viChn;
+  // track outstanding frames
+  g_atomic_int_inc(&self->vi_frames_outstanding);
+  return m;
 }
 
 /// An allocator that only supports _import()
@@ -208,4 +221,8 @@ MB_BLK gst_rkmpi_buffer_get_mb(GstBuffer *buf) {
   }
 
   return ret;
+}
+
+gint gst_rkmpi_allocator_vi_outstanding(GstRkmpiAllocator *self) {
+  return g_atomic_int_get(&self->vi_frames_outstanding);
 }

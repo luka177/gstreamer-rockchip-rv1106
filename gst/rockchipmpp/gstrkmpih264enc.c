@@ -167,6 +167,24 @@ static gboolean gst_rkmpi_h264enc_set_format(GstVideoEncoder *encoder,
 static GstFlowReturn gst_rkmpi_h264enc_finish(GstVideoEncoder *encoder);
 static GstFlowReturn gst_rkmpi_h264enc_handle_frame(GstVideoEncoder *self,
                                                     GstVideoCodecFrame *frame);
+
+static gboolean
+rkmpi_apply_rc(GstRKMPIH264Enc *self)
+{
+  VENC_CHN_ATTR_S attr;
+  memset(&attr, 0, sizeof(attr));
+  if (RK_MPI_VENC_GetChnAttr(chnId, &attr) != RK_SUCCESS)
+    return FALSE;
+
+  // Only update fields we support setting at runtime.
+  attr.stRcAttr.enRcMode = VENC_RC_MODE_H264CBR;
+  attr.stRcAttr.stH264Cbr.u32BitRate = self->bitrate_kbps;
+  attr.stRcAttr.stH264Cbr.u32Gop     = self->gop_count;
+gst_printerrln("hi from rkmpi_apply_rc\n");
+  RK_S32 ret = RK_MPI_VENC_SetChnAttr(chnId, &attr);
+  return ret == RK_SUCCESS;
+}
+
 static void gst_rkmpi_h264enc_set_property(GObject *object,
                                            guint prop_id,
                                            const GValue *value,
@@ -178,12 +196,22 @@ static void gst_rkmpi_h264enc_set_property(GObject *object,
     self->bitrate_kbps = g_value_get_uint(value);
     break;
   case PROP_GOP:
-    guint gop_count = g_value_get_uint(value);
-    self->gop_count = gop_count;
+    self->gop_count = g_value_get_uint(value);
     break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
     break;
+  }
+gst_printerrln("gst_rkmpi_h264enc_set_property: got new prop\n");
+  if (self->state && !g_atomic_int_get(&self->stopping)) {
+    if (!rkmpi_apply_rc(self)) {
+      GST_WARNING_OBJECT(self, "Failed to apply RC change at runtime "
+                              "(bitrate=%u kbps, gop=%u)",
+                              self->bitrate_kbps, self->gop_count);
+    } else {
+      GST_INFO_OBJECT(self, "Applied RC change: bitrate=%u kbps, gop=%u",
+                      self->bitrate_kbps, self->gop_count);
+    }
   }
 }
 
@@ -198,7 +226,7 @@ static void gst_rkmpi_h264enc_get_property(GObject *object,
     g_value_set_uint(value, self->bitrate_kbps);
     break;
   case PROP_GOP:
-    g_value_get_uint(value, self->gop_count);
+    g_value_set_uint(value, self->gop_count);
     break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -239,7 +267,7 @@ static void gst_rkmpi_h264enc_class_init(GstRKMPIH264EncClass *klass) {
                         1,
                         200000,
                         4000,
-                        G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+                        G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | GST_PARAM_MUTABLE_PLAYING);
 
   obj_properties[PROP_GOP] =
       g_param_spec_uint("gop",
@@ -248,7 +276,7 @@ static void gst_rkmpi_h264enc_class_init(GstRKMPIH264EncClass *klass) {
                         1,
                         1024,
                         8,
-                        G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+                        G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | GST_PARAM_MUTABLE_PLAYING);
   g_object_class_install_properties(gobject_class, N_PROPERTIES, obj_properties);
 
   GstElementClass *element_class = GST_ELEMENT_CLASS(klass);
@@ -444,7 +472,7 @@ static gboolean gst_rkmpi_h264enc_set_format(GstVideoEncoder *encoder,
   stAttr.stRcAttr.stH264Cbr.fr32DstFrameRateDen = 1;
   stAttr.stRcAttr.stH264Cbr.u32StatTime = 1;
 
- stAttr.stRcAttr.enRcMode = VENC_RC_MODE_H264CBR;
+  stAttr.stRcAttr.enRcMode = VENC_RC_MODE_H264CBR;
   stAttr.stRcAttr.stH264Cbr.u32BitRate = self->bitrate_kbps;
   stAttr.stRcAttr.stH264Cbr.u32Gop = self->gop_count;
   RK_MPI_VENC_CreateChn(chnId, &stAttr);
@@ -452,17 +480,18 @@ static gboolean gst_rkmpi_h264enc_set_format(GstVideoEncoder *encoder,
   VENC_RC_PARAM_S pstRcParam;
   memset(&pstRcParam, 0, sizeof(VENC_RC_PARAM_S));
   pstRcParam.s32FirstFrameStartQp = 28;
-pstRcParam.stParamH264.u32MinQp   = 8;
-pstRcParam.stParamH264.u32MaxQp   = 51;
-pstRcParam.stParamH264.u32MinIQp  = 8;
-pstRcParam.stParamH264.u32MaxIQp  = 51;
+  pstRcParam.stParamH264.u32MinQp   = 8;
+  pstRcParam.stParamH264.u32MaxQp   = 51;
+  pstRcParam.stParamH264.u32MinIQp  = 8;
+  pstRcParam.stParamH264.u32MaxIQp  = 51;
 
-// try to get stable bitrate???
-pstRcParam.stParamH264.u32FrmMinQp   = 16;
-pstRcParam.stParamH264.u32FrmMinIQp  = 14;
-pstRcParam.stParamH264.u32FrmMaxQp   = 36;
-pstRcParam.stParamH264.u32FrmMaxIQp  = 32;
+  // try to get stable bitrate???
+  pstRcParam.stParamH264.u32FrmMinQp   = 16;
+  pstRcParam.stParamH264.u32FrmMinIQp  = 14;
+  pstRcParam.stParamH264.u32FrmMaxQp   = 36;
+  pstRcParam.stParamH264.u32FrmMaxIQp  = 32;
   RK_MPI_VENC_SetRcParam(chnId, &pstRcParam);
+
  /* VENC_SUPERFRAME_CFG_S stSuperFrameCfg;
   memset(&stSuperFrameCfg, 0, sizeof(stSuperFrameCfg));
   stSuperFrameCfg.enSuperFrmMode = SUPERFRM_DISCARD;
@@ -476,6 +505,13 @@ pstRcParam.stParamH264.u32FrmMaxIQp  = 32;
   stRecvParam.s32RecvPicNum = -1;
   RK_MPI_VENC_StartRecvFrame(chnId, &stRecvParam);
 
+  VENC_INTRA_REFRESH_S stIntraRefresh;
+  memset(&stIntraRefresh, 0, sizeof(stIntraRefresh));
+  stIntraRefresh.bRefreshEnable = RK_TRUE;
+  stIntraRefresh.enIntraRefreshMode = INTRA_REFRESH_ROW;
+  stIntraRefresh.u32RefreshNum = 10;
+  RK_S32 rkret = RK_MPI_VENC_SetIntraRefresh(chnId, &stIntraRefresh);
+gst_printerrln("gst_rkmpi_h264enc_set_format: RK_MPI_VENC_SetIntraRefresh: %d\n", rkret);
     gst_pad_add_probe (GST_VIDEO_ENCODER (encoder)->sinkpad,
                      GST_PAD_PROBE_TYPE_EVENT_UPSTREAM,
                      sink_event_probe, self, NULL);
@@ -543,11 +579,13 @@ static GstFlowReturn gst_rkmpi_h264enc_handle_frame(GstVideoEncoder *encoder,
                                                     GstVideoCodecFrame *frame) {
   GstRKMPIH264Enc *self = GST_RKMPIH264ENC(encoder);
   GstPad *srcpad = encoder->srcpad;
+  GstPad *sinkpad = encoder->sinkpad;
+
   const RK_S32 SEND_TIMEOUT_MS = 20;
   RK_S32 rkret = 0;
 
   if (g_atomic_int_get (&self->stopping) ||
-      gst_pad_get_task_state (srcpad) != GST_TASK_STARTED)
+      gst_pad_get_task_state (srcpad) != GST_TASK_STARTED || GST_PAD_IS_FLUSHING(srcpad)  || GST_PAD_IS_FLUSHING(sinkpad))
     return GST_FLOW_FLUSHING;
 
   MB_BLK blk = NULL;
@@ -577,7 +615,7 @@ static GstFlowReturn gst_rkmpi_h264enc_handle_frame(GstVideoEncoder *encoder,
 
   for (;;) {
     if (g_atomic_int_get (&self->stopping) ||
-        gst_pad_get_task_state (srcpad) != GST_TASK_STARTED)
+        gst_pad_get_task_state (srcpad) != GST_TASK_STARTED || GST_PAD_IS_FLUSHING(srcpad)  || GST_PAD_IS_FLUSHING(sinkpad))
       return GST_FLOW_FLUSHING;
 
     rkret = RK_MPI_VENC_SendFrame (chnId, &h264_frame, SEND_TIMEOUT_MS);
