@@ -50,6 +50,7 @@ struct _GstRKMPIH264Enc {
 
   // config
   guint bitrate_kbps;
+  guint gop_count;
 
   // What seqno is that of the next buffer?
   _Atomic uint32_t input_frame_counter;
@@ -66,6 +67,7 @@ struct _GstRKMPIH264EncClass {
 enum {
   PROP_0,
   PROP_BITRATE,
+  PROP_GOP,
   N_PROPERTIES
 };
 
@@ -155,6 +157,7 @@ static GstStaticPadTemplate gst_rkmpih264enc_sink_template =
 static void gst_rkmpi_h264enc_init(GstRKMPIH264Enc *element) {
   GstRKMPIH264Enc *self = GST_RKMPIH264ENC(element);
   self->bitrate_kbps = 4000; // default 4 Mbps
+  self->gop_count = 8; // Default GOP
 }
 
 static gboolean gst_rkmpi_h264enc_start(GstVideoEncoder *encoder);
@@ -174,6 +177,10 @@ static void gst_rkmpi_h264enc_set_property(GObject *object,
   case PROP_BITRATE:
     self->bitrate_kbps = g_value_get_uint(value);
     break;
+  case PROP_GOP:
+    guint gop_count = g_value_get_uint(value);
+    self->gop_count = gop_count;
+    break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
     break;
@@ -189,6 +196,9 @@ static void gst_rkmpi_h264enc_get_property(GObject *object,
   switch (prop_id) {
   case PROP_BITRATE:
     g_value_set_uint(value, self->bitrate_kbps);
+    break;
+  case PROP_GOP:
+    g_value_get_uint(value, self->gop_count);
     break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -229,6 +239,15 @@ static void gst_rkmpi_h264enc_class_init(GstRKMPIH264EncClass *klass) {
                         1,
                         200000,
                         4000,
+                        G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
+
+  obj_properties[PROP_GOP] =
+      g_param_spec_uint("gop",
+                        "gop",
+                        "Target GOP",
+                        1,
+                        1024,
+                        8,
                         G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS);
   g_object_class_install_properties(gobject_class, N_PROPERTIES, obj_properties);
 
@@ -427,7 +446,7 @@ static gboolean gst_rkmpi_h264enc_set_format(GstVideoEncoder *encoder,
 
  stAttr.stRcAttr.enRcMode = VENC_RC_MODE_H264CBR;
   stAttr.stRcAttr.stH264Cbr.u32BitRate = self->bitrate_kbps;
-  stAttr.stRcAttr.stH264Cbr.u32Gop = 7;
+  stAttr.stRcAttr.stH264Cbr.u32Gop = self->gop_count;
   RK_MPI_VENC_CreateChn(chnId, &stAttr);
 
   VENC_RC_PARAM_S pstRcParam;
