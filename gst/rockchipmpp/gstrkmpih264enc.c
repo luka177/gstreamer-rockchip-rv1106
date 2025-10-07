@@ -42,6 +42,11 @@ static struct QueuedGstFrame *queued_gst_frame_new(GstVideoCodecFrame *frame,
   return ret;
 }
 
+typedef enum {
+  RK_CODEC_H264 = 0,
+  RK_CODEC_H265,
+} RkCodec;
+
 struct _GstRKMPIH264Enc {
   // Gstreamer
   GstVideoEncoder parent;
@@ -49,6 +54,7 @@ struct _GstRKMPIH264Enc {
   GstVideoInfo info;
 
   // config
+  RkCodec codec;
   guint bitrate_kbps;
   guint gop_count;
 
@@ -66,6 +72,7 @@ struct _GstRKMPIH264EncClass {
 
 enum {
   PROP_0,
+  PROP_CODEC,
   PROP_BITRATE,
   PROP_GOP,
   N_PROPERTIES
@@ -137,12 +144,16 @@ static struct gst_rkmpi_format {
 #define GST_RKMPI_H264ENC_SIZE_CAPS                                            \
   "width  = (int) [ 96, MAX ], height = (int) [ 64, MAX ]"
 static GstStaticPadTemplate gst_rkmpi_h264enc_src_template =
-    GST_STATIC_PAD_TEMPLATE(
-        "src", GST_PAD_SRC, GST_PAD_ALWAYS,
-        GST_STATIC_CAPS("video/x-h264, " GST_RKMPI_H264ENC_SIZE_CAPS ","
-                        "stream-format = (string) { byte-stream }, "
-                        "alignment = (string) { au }, "
-                        "profile = (string) { baseline, main, high }"));
+  GST_STATIC_PAD_TEMPLATE("src",
+    GST_PAD_SRC, GST_PAD_ALWAYS,
+    GST_STATIC_CAPS(
+      /* downstream picks via capsfilter; we pick via property if unspecified */
+      "video/x-h264, stream-format=(string){ avc, byte-stream }, alignment=(string){ au, nal } ; "
+      "video/x-h265, stream-format=(string){ hvc1, hev1, byte-stream }, alignment=(string){ au, nal }"
+    )
+  );
+
+
 #define GST_RK_ALIST_CAPS_E(gst, rk) #gst ", "
 #define GST_RK_ALIST_CAPS_L(gst, rk) #gst
 static GstStaticPadTemplate gst_rkmpih264enc_sink_template =
@@ -158,6 +169,21 @@ static void gst_rkmpi_h264enc_init(GstRKMPIH264Enc *element) {
   GstRKMPIH264Enc *self = GST_RKMPIH264ENC(element);
   self->bitrate_kbps = 4000; // default 4 Mbps
   self->gop_count = 8; // Default GOP
+  self->codec = RK_CODEC_H264;
+}
+
+GType rk_codec_get_type(void) {
+  static volatile gsize id = 0;
+  if (g_once_init_enter(&id)) {
+    static const GEnumValue values[] = {
+      { RK_CODEC_H264, "H.264/AVC", "h264" },
+      { RK_CODEC_H265, "H.265/HEVC", "h265" },
+      { 0, NULL, NULL }
+    };
+    GType _id = g_enum_register_static("RkCodec", values);
+    g_once_init_leave(&id, _id);
+  }
+  return id;
 }
 
 static gboolean gst_rkmpi_h264enc_start(GstVideoEncoder *encoder);
@@ -177,9 +203,15 @@ rkmpi_apply_rc(GstRKMPIH264Enc *self)
     return FALSE;
 
   // Only update fields we support setting at runtime.
-  attr.stRcAttr.enRcMode = VENC_RC_MODE_H264CBR;
-  attr.stRcAttr.stH264Cbr.u32BitRate = self->bitrate_kbps;
-  attr.stRcAttr.stH264Cbr.u32Gop     = self->gop_count;
+  if(self->codec == RK_CODEC_H265) {
+    attr.stRcAttr.enRcMode = VENC_RC_MODE_H265CBR;
+    attr.stRcAttr.stH265Cbr.u32BitRate = self->bitrate_kbps;
+    attr.stRcAttr.stH265Cbr.u32Gop     = self->gop_count;
+  } else {
+    attr.stRcAttr.enRcMode = VENC_RC_MODE_H264CBR;
+    attr.stRcAttr.stH264Cbr.u32BitRate = self->bitrate_kbps;
+    attr.stRcAttr.stH264Cbr.u32Gop     = self->gop_count;
+  }
 gst_printerrln("hi from rkmpi_apply_rc\n");
   RK_S32 ret = RK_MPI_VENC_SetChnAttr(chnId, &attr);
   return ret == RK_SUCCESS;
@@ -192,6 +224,9 @@ static void gst_rkmpi_h264enc_set_property(GObject *object,
   GstRKMPIH264Enc *self = GST_RKMPIH264ENC(object);
 
   switch (prop_id) {
+  case PROP_CODEC:
+    self->codec = g_value_get_enum(value);
+    break;
   case PROP_BITRATE:
     self->bitrate_kbps = g_value_get_uint(value);
     break;
@@ -222,6 +257,9 @@ static void gst_rkmpi_h264enc_get_property(GObject *object,
   GstRKMPIH264Enc *self = GST_RKMPIH264ENC(object);
 
   switch (prop_id) {
+  case PROP_CODEC:
+    g_value_set_enum(value, self->codec);
+    break;
   case PROP_BITRATE:
     g_value_set_uint(value, self->bitrate_kbps);
     break;
@@ -259,6 +297,12 @@ static void gst_rkmpi_h264enc_class_init(GstRKMPIH264EncClass *klass) {
   GObjectClass *gobject_class = G_OBJECT_CLASS(klass);
   gobject_class->set_property = gst_rkmpi_h264enc_set_property;
   gobject_class->get_property = gst_rkmpi_h264enc_get_property;
+
+ obj_properties[PROP_CODEC] =
+    g_param_spec_enum("codec", "Codec",
+                      "Which codec to encode with",
+                      rk_codec_get_type(), RK_CODEC_H265,
+                      G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | GST_PARAM_MUTABLE_PLAYING);
 
   obj_properties[PROP_BITRATE] =
       g_param_spec_uint("bitrate",
@@ -455,41 +499,64 @@ static gboolean gst_rkmpi_h264enc_set_format(GstVideoEncoder *encoder,
 
   VENC_CHN_ATTR_S stAttr;
   memset(&stAttr, 0, sizeof(VENC_CHN_ATTR_S));
-  stAttr.stVencAttr.enType = RK_VIDEO_ID_AVC;
   if (!gst_gst2rkmpi_format(&stAttr.stVencAttr.enPixelFormat,
                             GST_VIDEO_INFO_FORMAT(&self->info)))
     return FALSE;
-  stAttr.stVencAttr.u32Profile = H264E_PROFILE_HIGH;
+
+  VENC_RC_PARAM_S pstRcParam;
+  memset(&pstRcParam, 0, sizeof(VENC_RC_PARAM_S));
+
+  if(self->codec == RK_CODEC_H265) {
+    stAttr.stVencAttr.enType = RK_VIDEO_ID_HEVC;
+    stAttr.stVencAttr.u32Profile = H265E_PROFILE_MAIN;
+    stAttr.stRcAttr.enRcMode = VENC_RC_MODE_H265CBR;
+    stAttr.stRcAttr.stH265Cbr.u32BitRate = self->bitrate_kbps;
+    stAttr.stRcAttr.stH265Cbr.u32Gop = self->gop_count;
+    stAttr.stRcAttr.stH265Cbr.u32SrcFrameRateNum = 60;
+    stAttr.stRcAttr.stH265Cbr.u32SrcFrameRateDen = 1;
+    stAttr.stRcAttr.stH265Cbr.fr32DstFrameRateNum = 60;
+    stAttr.stRcAttr.stH265Cbr.fr32DstFrameRateDen = 1;
+    stAttr.stRcAttr.stH265Cbr.u32StatTime = 1;
+    pstRcParam.stParamH265.u32MinQp   = 8;
+    pstRcParam.stParamH265.u32MaxQp   = 51;
+    pstRcParam.stParamH265.u32MinIQp  = 8;
+    pstRcParam.stParamH265.u32MaxIQp  = 51;
+    pstRcParam.stParamH265.u32FrmMinQp   = 16;
+    pstRcParam.stParamH265.u32FrmMinIQp  = 14;
+    pstRcParam.stParamH265.u32FrmMaxQp   = 36;
+    pstRcParam.stParamH265.u32FrmMaxIQp  = 32;
+  } else {
+    stAttr.stVencAttr.enType = RK_VIDEO_ID_AVC;
+    stAttr.stVencAttr.u32Profile = H264E_PROFILE_HIGH;
+    stAttr.stRcAttr.enRcMode = VENC_RC_MODE_H264CBR;
+    stAttr.stRcAttr.stH264Cbr.u32BitRate = self->bitrate_kbps;
+    stAttr.stRcAttr.stH264Cbr.u32Gop = self->gop_count;
+    stAttr.stRcAttr.stH264Cbr.u32SrcFrameRateNum = 60;
+    stAttr.stRcAttr.stH264Cbr.u32SrcFrameRateDen = 1;
+    stAttr.stRcAttr.stH264Cbr.fr32DstFrameRateNum = 60;
+    stAttr.stRcAttr.stH264Cbr.fr32DstFrameRateDen = 1;
+    stAttr.stRcAttr.stH264Cbr.u32StatTime = 1;
+    pstRcParam.stParamH264.u32MinQp   = 8;
+    pstRcParam.stParamH264.u32MaxQp   = 51;
+    pstRcParam.stParamH264.u32MinIQp  = 8;
+    pstRcParam.stParamH264.u32MaxIQp  = 51;
+    pstRcParam.stParamH264.u32FrmMinQp   = 16;
+    pstRcParam.stParamH264.u32FrmMinIQp  = 14;
+    pstRcParam.stParamH264.u32FrmMaxQp   = 36;
+    pstRcParam.stParamH264.u32FrmMaxIQp  = 32;
+  }
+
   stAttr.stVencAttr.u32PicWidth = width;
   stAttr.stVencAttr.u32PicHeight = height;
   stAttr.stVencAttr.u32VirWidth = RK_ALIGN_2(width);
   stAttr.stVencAttr.u32VirHeight = RK_ALIGN_2(height);
   stAttr.stVencAttr.u32StreamBufCnt = 8;
   stAttr.stVencAttr.u32BufSize = width * height * 2;
-  stAttr.stRcAttr.stH264Cbr.u32SrcFrameRateNum = 60;
-  stAttr.stRcAttr.stH264Cbr.u32SrcFrameRateDen = 1;
-  stAttr.stRcAttr.stH264Cbr.fr32DstFrameRateNum = 60;
-  stAttr.stRcAttr.stH264Cbr.fr32DstFrameRateDen = 1;
-  stAttr.stRcAttr.stH264Cbr.u32StatTime = 1;
 
-  stAttr.stRcAttr.enRcMode = VENC_RC_MODE_H264CBR;
-  stAttr.stRcAttr.stH264Cbr.u32BitRate = self->bitrate_kbps;
-  stAttr.stRcAttr.stH264Cbr.u32Gop = self->gop_count;
   RK_MPI_VENC_CreateChn(chnId, &stAttr);
 
-  VENC_RC_PARAM_S pstRcParam;
-  memset(&pstRcParam, 0, sizeof(VENC_RC_PARAM_S));
   pstRcParam.s32FirstFrameStartQp = 28;
-  pstRcParam.stParamH264.u32MinQp   = 8;
-  pstRcParam.stParamH264.u32MaxQp   = 51;
-  pstRcParam.stParamH264.u32MinIQp  = 8;
-  pstRcParam.stParamH264.u32MaxIQp  = 51;
 
-  // try to get stable bitrate???
-  pstRcParam.stParamH264.u32FrmMinQp   = 16;
-  pstRcParam.stParamH264.u32FrmMinIQp  = 14;
-  pstRcParam.stParamH264.u32FrmMaxQp   = 36;
-  pstRcParam.stParamH264.u32FrmMaxIQp  = 32;
   RK_MPI_VENC_SetRcParam(chnId, &pstRcParam);
 
  /* VENC_SUPERFRAME_CFG_S stSuperFrameCfg;
@@ -518,7 +585,8 @@ gst_printerrln("gst_rkmpi_h264enc_set_format: RK_MPI_VENC_SetIntraRefresh: %d\n"
 
 
   gst_pad_start_task(encoder->srcpad, gst_rkmpi_buffer_loop, self, NULL);
-
+  if(self->codec == RK_CODEC_H265)
+      return gst_rkmpi_enc_set_src_caps(encoder, "video/x-h265");
   return gst_rkmpi_enc_set_src_caps(encoder, "video/x-h264");
 }
 
