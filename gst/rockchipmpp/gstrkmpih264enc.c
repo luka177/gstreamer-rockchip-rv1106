@@ -57,6 +57,7 @@ struct _GstRKMPIH264Enc {
   RkCodec codec;
   guint bitrate_kbps;
   guint gop_count;
+  guint rotation;
 
   // What seqno is that of the next buffer?
   _Atomic uint32_t input_frame_counter;
@@ -75,6 +76,7 @@ enum {
   PROP_CODEC,
   PROP_BITRATE,
   PROP_GOP,
+  PROP_ROTATION,
   N_PROPERTIES
 };
 
@@ -169,6 +171,7 @@ static void gst_rkmpi_h264enc_init(GstRKMPIH264Enc *element) {
   GstRKMPIH264Enc *self = GST_RKMPIH264ENC(element);
   self->bitrate_kbps = 4000; // default 4 Mbps
   self->gop_count = 8; // Default GOP
+  self->rotation = 0; // Default rotation
   self->codec = RK_CODEC_H264;
 }
 
@@ -233,6 +236,9 @@ static void gst_rkmpi_h264enc_set_property(GObject *object,
   case PROP_GOP:
     self->gop_count = g_value_get_uint(value);
     break;
+  case PROP_ROTATION:
+    self->rotation = g_value_get_uint(value);
+    break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
     break;
@@ -265,6 +271,9 @@ static void gst_rkmpi_h264enc_get_property(GObject *object,
     break;
   case PROP_GOP:
     g_value_set_uint(value, self->gop_count);
+    break;
+  case PROP_ROTATION:
+    g_value_set_uint(value, self->rotation);
     break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -320,6 +329,14 @@ static void gst_rkmpi_h264enc_class_init(GstRKMPIH264EncClass *klass) {
                         1,
                         1024,
                         8,
+                        G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | GST_PARAM_MUTABLE_PLAYING);
+  obj_properties[PROP_ROTATION] =
+      g_param_spec_uint("rotation",
+                        "Rotation (degrees)",
+                        "0/90/180/270",
+                        0,
+                        270,
+                        0,
                         G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | GST_PARAM_MUTABLE_PLAYING);
   g_object_class_install_properties(gobject_class, N_PROPERTIES, obj_properties);
 
@@ -506,6 +523,24 @@ static gboolean gst_rkmpi_h264enc_set_format(GstVideoEncoder *encoder,
   VENC_RC_PARAM_S pstRcParam;
   memset(&pstRcParam, 0, sizeof(VENC_RC_PARAM_S));
 
+  ROTATION_E rotation;
+  switch (self->rotation) {
+    case 0:
+      rotation = ROTATION_0;
+      break;
+    case 90:
+      rotation = ROTATION_90;
+      break;
+    case 180:
+      rotation = ROTATION_180;
+      break;
+    case 270:
+      rotation = ROTATION_270;
+      break;
+    default:
+      gst_printerrln("Invalid rotation(%d), should be 0/90/180/270\n", self->rotation);
+  }
+
   if(self->codec == RK_CODEC_H265) {
     stAttr.stVencAttr.enType = RK_VIDEO_ID_HEVC;
     stAttr.stVencAttr.u32Profile = H265E_PROFILE_MAIN;
@@ -558,7 +593,7 @@ static gboolean gst_rkmpi_h264enc_set_format(GstVideoEncoder *encoder,
   pstRcParam.s32FirstFrameStartQp = 28;
 
   RK_MPI_VENC_SetRcParam(chnId, &pstRcParam);
-
+  RK_MPI_VENC_SetChnRotation(chnId, rotation);
  /* VENC_SUPERFRAME_CFG_S stSuperFrameCfg;
   memset(&stSuperFrameCfg, 0, sizeof(stSuperFrameCfg));
   stSuperFrameCfg.enSuperFrmMode = SUPERFRM_DISCARD;
