@@ -58,7 +58,8 @@ struct _GstRKMPIH264Enc {
   guint bitrate_kbps;
   guint gop_count;
   guint rotation;
-
+  gboolean hflip;
+  gboolean vflip;
   // What seqno is that of the next buffer?
   _Atomic uint32_t input_frame_counter;
   /// Type: QueuedGstFrame
@@ -77,6 +78,8 @@ enum {
   PROP_BITRATE,
   PROP_GOP,
   PROP_ROTATION,
+  PROP_HFLIP,
+  PROP_VFLIP,
   N_PROPERTIES
 };
 
@@ -172,6 +175,8 @@ static void gst_rkmpi_h264enc_init(GstRKMPIH264Enc *element) {
   self->bitrate_kbps = 4000; // default 4 Mbps
   self->gop_count = 8; // Default GOP
   self->rotation = 0; // Default rotation
+  self->hflip = 0;
+  self->vflip = 0;
   self->codec = RK_CODEC_H264;
 }
 
@@ -239,6 +244,12 @@ static void gst_rkmpi_h264enc_set_property(GObject *object,
   case PROP_ROTATION:
     self->rotation = g_value_get_uint(value);
     break;
+  case PROP_HFLIP:
+    self->hflip = g_value_get_boolean(value);
+    break;
+  case PROP_VFLIP:
+    self->vflip = g_value_get_boolean(value);
+    break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
     break;
@@ -274,6 +285,12 @@ static void gst_rkmpi_h264enc_get_property(GObject *object,
     break;
   case PROP_ROTATION:
     g_value_set_uint(value, self->rotation);
+    break;
+  case PROP_HFLIP:
+    g_value_set_boolean(value, self->hflip);
+    break;
+  case PROP_VFLIP:
+    g_value_set_boolean(value, self->vflip);
     break;
   default:
     G_OBJECT_WARN_INVALID_PROPERTY_ID(object, prop_id, pspec);
@@ -336,6 +353,20 @@ static void gst_rkmpi_h264enc_class_init(GstRKMPIH264EncClass *klass) {
                         "0/90/180/270",
                         0,
                         270,
+                        0,
+                        G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | GST_PARAM_MUTABLE_PLAYING);
+
+  obj_properties[PROP_HFLIP] =
+      g_param_spec_boolean("hflip",
+                        "Horizontal flip",
+                        "0/1",
+                        0,
+                        G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | GST_PARAM_MUTABLE_PLAYING);
+
+  obj_properties[PROP_VFLIP] =
+      g_param_spec_boolean("vflip",
+                        "Vertical flip",
+                        "0/1",
                         0,
                         G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | GST_PARAM_MUTABLE_PLAYING);
   g_object_class_install_properties(gobject_class, N_PROPERTIES, obj_properties);
@@ -587,6 +618,13 @@ static gboolean gst_rkmpi_h264enc_set_format(GstVideoEncoder *encoder,
   stAttr.stVencAttr.u32VirHeight = RK_ALIGN_2(height);
   stAttr.stVencAttr.u32StreamBufCnt = 8;
   stAttr.stVencAttr.u32BufSize = width * height * 2;
+
+  if(self->hflip && self->vflip)
+    stAttr.stVencAttr.enMirror = MIRROR_BOTH;
+  else if(self->hflip)
+    stAttr.stVencAttr.enMirror = MIRROR_HORIZONTAL;
+  else if(self->vflip)
+    stAttr.stVencAttr.enMirror = MIRROR_VERTICAL;
 
   RK_MPI_VENC_CreateChn(chnId, &stAttr);
 
