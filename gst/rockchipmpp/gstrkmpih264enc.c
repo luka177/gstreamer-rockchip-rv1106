@@ -583,11 +583,11 @@ static gboolean gst_rkmpi_h264enc_set_format(GstVideoEncoder *encoder,
     stAttr.stRcAttr.stH265Cbr.fr32DstFrameRateNum = 60;
     stAttr.stRcAttr.stH265Cbr.fr32DstFrameRateDen = 1;
     stAttr.stRcAttr.stH265Cbr.u32StatTime = 1;
-    pstRcParam.stParamH265.u32MinQp   = 8;
+    pstRcParam.stParamH265.u32MinQp   = 10;
     pstRcParam.stParamH265.u32MaxQp   = 51;
     pstRcParam.stParamH265.u32MinIQp  = 8;
     pstRcParam.stParamH265.u32MaxIQp  = 51;
-    pstRcParam.stParamH265.u32FrmMinQp   = 16;
+    pstRcParam.stParamH265.u32FrmMinQp   = 20;
     pstRcParam.stParamH265.u32FrmMinIQp  = 14;
     pstRcParam.stParamH265.u32FrmMaxQp   = 36;
     pstRcParam.stParamH265.u32FrmMaxIQp  = 32;
@@ -602,11 +602,11 @@ static gboolean gst_rkmpi_h264enc_set_format(GstVideoEncoder *encoder,
     stAttr.stRcAttr.stH264Cbr.fr32DstFrameRateNum = 60;
     stAttr.stRcAttr.stH264Cbr.fr32DstFrameRateDen = 1;
     stAttr.stRcAttr.stH264Cbr.u32StatTime = 1;
-    pstRcParam.stParamH264.u32MinQp   = 8;
+    pstRcParam.stParamH264.u32MinQp   = 10;
     pstRcParam.stParamH264.u32MaxQp   = 51;
     pstRcParam.stParamH264.u32MinIQp  = 8;
     pstRcParam.stParamH264.u32MaxIQp  = 51;
-    pstRcParam.stParamH264.u32FrmMinQp   = 16;
+    pstRcParam.stParamH264.u32FrmMinQp   = 20;
     pstRcParam.stParamH264.u32FrmMinIQp  = 14;
     pstRcParam.stParamH264.u32FrmMaxQp   = 36;
     pstRcParam.stParamH264.u32FrmMaxIQp  = 32;
@@ -617,7 +617,7 @@ static gboolean gst_rkmpi_h264enc_set_format(GstVideoEncoder *encoder,
   stAttr.stVencAttr.u32VirWidth = RK_ALIGN_2(width);
   stAttr.stVencAttr.u32VirHeight = RK_ALIGN_2(height);
   stAttr.stVencAttr.u32StreamBufCnt = 8;
-  stAttr.stVencAttr.u32BufSize = width * height * 2;
+  stAttr.stVencAttr.u32BufSize = (width * height) / 2;
 
   if(self->hflip && self->vflip)
     stAttr.stVencAttr.enMirror = MIRROR_BOTH;
@@ -640,6 +640,10 @@ static gboolean gst_rkmpi_h264enc_set_format(GstVideoEncoder *encoder,
   stSuperFrameCfg.enRcPriority = VENC_RC_PRIORITY_BITRATE_FIRST;
   RK_MPI_VENC_SetSuperFrameStrategy(stVencCfg.u32ChnId, &stSuperFrameCfg);
 */
+  VENC_FRAMELOST_S fl = {0};
+  fl.bFrmLostOpen   = RK_FALSE;
+  RK_MPI_VENC_SetFrameLostStrategy(chnId, &fl);
+
   VENC_RECV_PIC_PARAM_S stRecvParam;
   memset(&stRecvParam, 0, sizeof(VENC_RECV_PIC_PARAM_S));
   stRecvParam.s32RecvPicNum = -1;
